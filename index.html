@@ -1,0 +1,559 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Deep Space Survival</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#07111b;color:#eaf6ff;font-family:Arial,sans-serif;touch-action:none}
+#game{display:block;width:100%;height:100%;background:#101c26}
+#hud{position:fixed;top:8px;left:8px;right:8px;display:flex;gap:8px;align-items:flex-start;justify-content:space-between;pointer-events:none}
+.panel{background:#0a1724eF;border:1px solid #38546a;border-radius:9px;padding:7px 10px;font-size:12px;box-shadow:0 2px 8px #0007}
+.meter{height:9px;width:125px;max-width:22vw;background:#283845;border-radius:8px;overflow:hidden;margin-top:5px}
+.fill{height:100%;width:100%;transition:width .15s}
+#staminaFill{background:#52e6a4}
+#shipFill{background:#55baff}
+#actions{position:fixed;top:82px;left:8px;display:flex;gap:5px;pointer-events:auto}
+button{border:1px solid #49667b;background:#172b3a;color:white;border-radius:9px;padding:10px;font-weight:bold;font-size:12px;touch-action:manipulation}
+button.active{background:#187b70;border-color:#71ffe0;box-shadow:0 0 9px #3be6c055}
+#mapBox{position:fixed;right:8px;top:82px;width:135px;height:105px;background:#07111beF;border:1px solid #527086;border-radius:8px;overflow:hidden}
+#map{width:100%;height:100%}
+#mapToggle{position:fixed;right:8px;top:194px;pointer-events:auto}
+#controls{position:fixed;bottom:12px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:flex-end;pointer-events:none}
+#pad{width:135px;height:115px;position:relative;pointer-events:auto}
+.dir{position:absolute;width:43px;height:39px;padding:0;font-size:19px;background:#183044dd}
+#up{left:46px;top:0}#down{left:46px;bottom:0}#left{left:0;top:38px}#right{right:0;top:38px}
+#tools{display:flex;gap:6px;align-items:flex-end;pointer-events:auto}
+#tools button{min-width:57px;min-height:49px}
+#message{position:fixed;left:50%;top:45%;transform:translate(-50%,-50%);background:#091725ed;padding:14px 20px;border:1px solid #54768c;border-radius:10px;display:none;text-align:center;max-width:85%;z-index:5}
+#modal{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center;padding:15px;z-index:10}
+#modalCard{width:min(430px,95vw);max-height:85vh;overflow:auto;background:#102331;border:1px solid #4c7186;border-radius:14px;padding:17px}
+#modalCard button{margin:4px 2px}
+#inventory{line-height:1.8;font-size:14px}
+#progress{height:10px;background:#293b48;border-radius:8px;overflow:hidden}
+#progressFill{height:100%;width:0;background:#52e6a4}
+#notice{position:fixed;left:50%;bottom:140px;transform:translateX(-50%);background:#0a1724ed;border:1px solid #456276;border-radius:8px;padding:9px 13px;font-size:12px;display:none;white-space:nowrap;pointer-events:none}
+@media(max-height:420px){
+ .meter{height:7px;margin-top:2px}.panel{padding:5px 7px}
+ #actions{top:67px}#mapBox{top:67px;width:110px;height:78px}
+ #mapToggle{top:150px}#pad{transform:scale(.78);transform-origin:bottom left}
+ #tools button{min-height:40px;padding:7px;min-width:48px}
+ #controls{bottom:5px}#notice{bottom:95px}
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div class="panel">
+    <b>🧑 EXPLORER</b>
+    <div>Stamina: <span id="staminaText">100</span>%</div>
+    <div class="meter"><div class="fill" id="staminaFill"></div></div>
+    <div>Medicine: <span id="medicineText">0</span></div>
+  </div>
+  <div class="panel">
+    <b>🚀 SHIP STATUS</b>
+    <div>Hull: <span id="shipText">100</span>%</div>
+    <div class="meter"><div class="fill" id="shipFill"></div></div>
+    <div>Ore: <span id="oreText">0</span> | Crystal: <span id="crystalText">0</span></div>
+  </div>
+</div>
+
+<div id="actions">
+  <button class="active" data-action="move">🚶 Move</button>
+  <button data-action="dig">⛏ Dig</button>
+  <button data-action="fire">🔫 Fire</button>
+  <button data-action="interact">✋ Interact</button>
+</div>
+
+<div id="mapBox"><canvas id="map"></canvas></div>
+<button id="mapToggle">🗺 Expand Map</button>
+
+<div id="controls">
+  <div id="pad">
+    <button class="dir" id="up">▲</button>
+    <button class="dir" id="left">◀</button>
+    <button class="dir" id="right">▶</button>
+    <button class="dir" id="down">▼</button>
+  </div>
+  <div id="tools">
+    <button id="runBtn">🏃 Run</button>
+    <button id="actionBtn">⛏ Dig</button>
+    <button id="useBtn">💊 Use<br>Medicine</button>
+    <button id="pauseBtn">Ⅱ Pause</button>
+  </div>
+</div>
+
+<div id="notice"></div>
+<div id="message"></div>
+<div id="modal"><div id="modalCard"></div></div>
+
+<script>
+"use strict";
+
+/* ---------- WORLD AND GAME STATE ---------- */
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const mapCanvas=document.getElementById("map");
+const mctx=mapCanvas.getContext("2d");
+const W=48,H=32,TILE=40;
+const EMPTY=0,WALL=1,ORE=2,CRYSTAL=3;
+let world=[],seen=[],objects=[],bullets=[],particles=[];
+let camera={x:0,y:0};
+let paused=false,gameOver=false,expandedMap=false;
+let selectedAction="move",running=false;
+let lastTime=0,crafting=null,craftEnd=0;
+let toastTimer=null,noticeTimer=null;
+const player={
+ x:4*TILE+20,y:4*TILE+20,r:11,
+ stamina:100,maxStamina:100,
+ dirX:1,dirY:0,hp:100,
+ inv:{ore:0,crystal:0,medicine:0}
+};
+const ship={x:5*TILE+20,y:5*TILE+20,r:25,hp:100,maxHp:100};
+const lab={x:9*TILE+20,y:5*TILE+20,r:23};
+const discovered=new Set();
+const keys={};
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const tileAt=(x,y)=>({tx:Math.floor(x/TILE),ty:Math.floor(y/TILE)});
+const inside=(x,y)=>x>=0&&y>=0&&x<W&&y<H;
+
+function generateWorld(){
+ world=Array.from({length:H},(_,y)=>Array.from({length:W},(_,x)=>{
+   if(x===0||y===0||x===W-1||y===H-1)return WALL;
+   if(Math.random()<.14)return WALL;
+   if(Math.random()<.055)return ORE;
+   if(Math.random()<.018)return CRYSTAL;
+   return EMPTY;
+ }));
+ // Guaranteed starting base and routes.
+ for(let y=2;y<10;y++)for(let x=2;x<13;x++)world[y][x]=EMPTY;
+ // Add extra open areas and resource patches.
+ for(let i=0;i<40;i++){
+   let x=3+Math.floor(Math.random()*(W-6));
+   let y=3+Math.floor(Math.random()*(H-6));
+   if(world[y][x]===EMPTY)world[y][x]=Math.random()<.7?ORE:CRYSTAL;
+ }
+ seen=Array.from({length:H},()=>Array(W).fill(false));
+ objects=[];
+ for(let i=0;i<28;i++){
+   let x,y,tries=0;
+   do{x=2+Math.floor(Math.random()*(W-4));y=2+Math.floor(Math.random()*(H-4));tries++}
+   while((world[y][x]!==EMPTY||Math.hypot(x*TILE-player.x/TILE,y*TILE-player.y/TILE)<7)&&tries<200);
+   if(tries<200)objects.push({type:"enemy",x:x*TILE+20,y:y*TILE+20,hp:30,r:12,attack:0});
+ }
+ for(let i=0;i<40;i++){
+   let x=2+Math.floor(Math.random()*(W-4)),y=2+Math.floor(Math.random()*(H-4));
+   if(world[y][x]===EMPTY)objects.push({type:"scrap",x:x*TILE+20,y:y*TILE+20,r:8});
+ }
+ reveal();
+}
+
+function reveal(){
+ const p=tileAt(player.x,player.y);
+ for(let y=p.ty-5;y<=p.ty+5;y++)for(let x=p.tx-5;x<=p.tx+5;x++){
+   if(inside(x,y)&&Math.hypot(x-p.tx,y-p.ty)<=5)seen[y][x]=true;
+ }
+}
+
+/* ---------- COLLISION AND MOVEMENT ---------- */
+function solidAt(x,y){
+ const t=tileAt(x,y);
+ if(!inside(t.tx,t.ty))return true;
+ if(world[t.ty][t.tx]===WALL)return true;
+ for(const o of [ship,lab]){
+   if(Math.hypot(x-o.x,y-o.y)<o.r+2)return true;
+ }
+ return false;
+}
+function canOccupy(x,y,r){
+ const points=[[x-r,y-r],[x+r,y-r],[x-r,y+r],[x+r,y+r],[x,y-r],[x,y+r],[x-r,y],[x+r,y]];
+ return points.every(p=>!solidAt(p[0],p[1]));
+}
+function movePlayer(dx,dy){
+ if(!dx&&!dy)return;
+ const len=Math.hypot(dx,dy)||1;dx/=len;dy/=len;
+ player.dirX=dx;player.dirY=dy;
+ const speed=running?190:115;
+ const staminaCost=running?13:0.25;
+ if(running&&player.stamina<=0){running=false;return}
+ const stepX=dx*speed*dt,stepY=dy*speed*dt;
+ const nx=player.x+stepX,ny=player.y+stepY;
+ // Substeps prevent fast movement from skipping walls.
+ const steps=Math.max(1,Math.ceil(Math.hypot(stepX,stepY)/5));
+ for(let i=0;i<steps;i++){
+   const sx=stepX/steps,sy=stepY/steps;
+   if(canOccupy(player.x+sx,player.y,player.r))player.x+=sx;
+   if(canOccupy(player.x,player.y+sy,player.r))player.y+=sy;
+ }
+ player.stamina=Math.max(0,player.stamina-staminaCost*dt);
+ if(player.stamina===0)running=false;
+ reveal();
+}
+
+function targetTile(){
+ return tileAt(player.x+player.dirX*(TILE+player.r),player.y+player.dirY*(TILE+player.r));
+}
+function dig(){
+ if(player.stamina<5){notify("Too tired to dig. Rest first.");return}
+ const t=targetTile();
+ if(!inside(t.tx,t.ty)){notify("Cannot dig here.");return}
+ const type=world[t.ty][t.tx];
+ if(type===WALL){world[t.ty][t.tx]=EMPTY;player.stamina=Math.max(0,player.stamina-7);reveal();burst(t.tx*TILE+20,t.ty*TILE+20,"#b8a58b",12);notify("Tunnel cleared!");return}
+ if(type===ORE||type===CRYSTAL){
+   world[t.ty][t.tx]=EMPTY;
+   if(type===ORE)player.inv.ore++;
+   else player.inv.crystal++;
+   player.stamina=Math.max(0,player.stamina-5);
+   burst(t.tx*TILE+20,t.ty*TILE+20,type===ORE?"#ffc36c":"#7ceeff",12);
+   notify(type===ORE?"Ore collected!":"Crystal collected!");
+   reveal();updateHUD();return;
+ }
+ notify("No diggable terrain in front.");
+}
+
+/* ---------- ACTIONS, COMBAT, INVENTORY ---------- */
+function fire(){
+ if(player.stamina<2){notify("Too tired to fire.");return}
+ player.stamina-=2;
+ const speed=430;
+ bullets.push({x:player.x+player.dirX*16,y:player.y+player.dirY*16,
+ vx:player.dirX*speed,vy:player.dirY*speed,life:1.4});
+ burst(player.x+player.dirX*17,player.y+player.dirY*17,"#ffd37a",3);
+}
+function interact(){
+ let dShip=dist(player,ship),dLab=dist(player,lab);
+ if(dLab<85){openLab();return}
+ if(dShip<95){openShip();return}
+ let item=objects.find(o=>o.type==="scrap"&&dist(player,o)<45);
+ if(item){player.inv.ore++;objects.splice(objects.indexOf(item),1);notify("Collected salvage ore.");updateHUD();return}
+ notify("Nothing nearby to interact with.");
+}
+function useMedicine(){
+ if(player.inv.medicine<=0){notify("No medicine available.");return}
+ if(player.stamina>=100){notify("Your stamina is already full.");return}
+ player.inv.medicine--;
+ player.stamina=Math.min(100,player.stamina+45);
+ notify("Medicine used. Stamina restored.");
+ updateHUD();
+}
+function openShip(){
+ showModal(`
+ <h2>🚀 Ship Console</h2>
+ <p>Hull integrity: ${Math.round(ship.hp)}%</p>
+ <p>Repair costs <b>3 ore</b> per 20% hull restored.</p>
+ <button onclick="repairShip()">🔧 Repair Ship</button>
+ <button onclick="closeModal()">Close</button>`);
+}
+function repairShip(){
+ if(ship.hp>=100){notify("Ship is already fully repaired.");return}
+ if(player.inv.ore<3){notify("You need 3 ore to repair.");return}
+ player.inv.ore-=3;ship.hp=Math.min(100,ship.hp+20);
+ closeModal();updateHUD();notify("Ship repaired.");
+}
+function openLab(){
+ showModal(`
+ <h2>🧪 Research Laboratory</h2>
+ <div id="inventory">
+ Ore: <b>${player.inv.ore}</b><br>
+ Crystal: <b>${player.inv.crystal}</b><br>
+ Medicine: <b>${player.inv.medicine}</b>
+ </div>
+ <hr>
+ <h3>Research: Stamina Medicine</h3>
+ <p>Cost: 2 crystal. Research unlocks medicine crafting.</p>
+ <button onclick="researchMedicine()">🔬 Research Recipe</button>
+ <h3>Medicine Fabricator</h3>
+ <p>Recipe: 2 ore + 1 crystal. Crafting takes 4 seconds.</p>
+ <div id="progress"><div id="progressFill"></div></div>
+ <p id="craftStatus">${crafting?"Crafting in progress":recipeUnlocked?"Recipe unlocked":"Recipe locked"}</p>
+ <button onclick="craftMedicine()">💊 Craft Medicine</button>
+ <button onclick="closeModal()">Leave Lab</button>`);
+}
+let recipeUnlocked=false;
+function researchMedicine(){
+ if(recipeUnlocked){notify("Recipe already researched.");return}
+ if(player.inv.crystal<2){notify("Need 2 crystals for research.");return}
+ player.inv.crystal-=2;recipeUnlocked=true;
+ openLab();updateHUD();notify("Medicine research completed!");
+}
+function craftMedicine(){
+ if(!recipeUnlocked){notify("Research the recipe first.");return}
+ if(crafting){notify("A crafting job is already running.");return}
+ if(player.inv.ore<2||player.inv.crystal<1){notify("Need 2 ore and 1 crystal.");return}
+ player.inv.ore-=2;player.inv.crystal-=1;
+ crafting={start:performance.now(),duration:4000};
+ openLab();updateHUD();notify("Medicine crafting started.");
+}
+function showModal(html){
+ document.getElementById("modalCard").innerHTML=html;
+ document.getElementById("modal").style.display="flex";
+}
+function closeModal(){document.getElementById("modal").style.display="none"}
+function notify(msg){
+ const n=document.getElementById("notice");n.textContent=msg;n.style.display="block";
+ clearTimeout(noticeTimer);noticeTimer=setTimeout(()=>n.style.display="none",2200);
+}
+function updateHUD(){
+ document.getElementById("staminaText").textContent=Math.round(player.stamina);
+ document.getElementById("staminaFill").style.width=player.stamina+"%";
+ document.getElementById("staminaFill").style.background=player.stamina<25?"#ff6262":"#52e6a4";
+ document.getElementById("shipText").textContent=Math.round(ship.hp);
+ document.getElementById("shipFill").style.width=ship.hp+"%";
+ document.getElementById("shipFill").style.background=ship.hp<30?"#ff5555":"#55baff";
+ document.getElementById("oreText").textContent=player.inv.ore;
+ document.getElementById("crystalText").textContent=player.inv.crystal;
+ document.getElementById("medicineText").textContent=player.inv.medicine;
+}
+
+/* ---------- RENDERING ---------- */
+let dt=0;
+function resize(){
+ const dpr=Math.min(window.devicePixelRatio||1,1.5);
+ canvas.width=Math.floor(innerWidth*dpr);
+ canvas.height=Math.floor(innerHeight*dpr);
+ canvas.style.width=innerWidth+"px";canvas.style.height=innerHeight+"px";
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ mapCanvas.width=expandedMap?600:270;
+ mapCanvas.height=expandedMap?450:210;
+ mapCanvas.style.width="100%";mapCanvas.style.height="100%";
+}
+window.addEventListener("resize",resize);
+function drawWorld(){
+ const vw=innerWidth,vh=innerHeight;
+ camera.x=clamp(player.x-vw/2,0,W*TILE-vw);
+ camera.y=clamp(player.y-vh/2,0,H*TILE-vh);
+ ctx.fillStyle="#101b25";ctx.fillRect(0,0,vw,vh);
+ const sx=Math.max(0,Math.floor(camera.x/TILE)),sy=Math.max(0,Math.floor(camera.y/TILE));
+ const ex=Math.min(W,Math.ceil((camera.x+vw)/TILE)+1),ey=Math.min(H,Math.ceil((camera.y+vh)/TILE)+1);
+ for(let y=sy;y<ey;y++)for(let x=sx;x<ex;x++){
+   let px=x*TILE-camera.x,py=y*TILE-camera.y;
+   ctx.fillStyle=((x*17+y*31)%7===0)?"#24333c":"#1c2b34";
+   ctx.fillRect(px,py,TILE,TILE);
+   ctx.strokeStyle="#2b3b44";ctx.strokeRect(px,py,TILE,TILE);
+   if(!seen[y][x]){
+     ctx.fillStyle="#050a11";ctx.fillRect(px,py,TILE,TILE);continue;
+   }
+   let t=world[y][x];
+   if(t===WALL){
+     ctx.fillStyle="#53616b";ctx.fillRect(px+2,py+2,TILE-4,TILE-4);
+     ctx.fillStyle="#78858d";ctx.fillRect(px+4,py+4,TILE-8,5);
+     ctx.fillStyle="#35434d";ctx.fillRect(px+4,py+TILE-9,TILE-8,5);
+   }else if(t===ORE||t===CRYSTAL){
+     ctx.fillStyle=t===ORE?"#d69a55":"#64e7ff";
+     ctx.beginPath();ctx.moveTo(px+20,py+7);ctx.lineTo(px+32,py+20);ctx.lineTo(px+21,py+32);ctx.lineTo(px+8,py+19);ctx.closePath();ctx.fill();
+     ctx.fillStyle="#ffffff55";ctx.fillRect(px+17,py+12,5,8);
+   }else{
+     // Subtle ground details.
+     ctx.fillStyle="#34454c";ctx.fillRect(px+8,py+10,3,3);
+     ctx.fillRect(px+28,py+29,2,2);
+   }
+ }
+ // Ship
+ drawCircle(ship.x,ship.y,ship.r,"#b8d9e7");
+ drawCircle(ship.x,ship.y,ship.r-6,"#294e64");
+ ctx.fillStyle="#d9f4ff";ctx.fillRect(ship.x-camera.x-10,ship.y-camera.y-5,20,10);
+ // Lab
+ drawCircle(lab.x,lab.y,lab.r,"#9aabbe");
+ drawCircle(lab.x,lab.y,lab.r-6,"#26566c");
+ ctx.fillStyle="#75ffd5";ctx.fillRect(lab.x-camera.x-9,lab.y-camera.y-10,18,20);
+ // World objects
+ for(const o of objects){
+   if(!seen[tileAt(o.x,o.y).ty]?.[tileAt(o.x,o.y).tx])continue;
+   if(o.type==="enemy"){
+     drawCircle(o.x,o.y,o.r,"#d94c5b");
+     drawCircle(o.x-3,o.y-3,3,"#ffb2a9");
+   }else{
+     drawCircle(o.x,o.y,o.r,"#d3b36a");
+   }
+ }
+ // Bullets
+ for(const b of bullets)drawCircle(b.x,b.y,4,"#ffe29b");
+ // Player
+ drawCircle(player.x,player.y,player.r,"#53e8bc");
+ drawCircle(player.x,player.y,player.r-4,"#153f4b");
+ drawCircle(player.x+player.dirX*6,player.y+player.dirY*6,3,"#ffffff");
+ // Direction indicator
+ ctx.strokeStyle="#9bffe0";ctx.lineWidth=2;
+ ctx.beginPath();ctx.moveTo(player.x-camera.x,player.y-camera.y);
+ ctx.lineTo(player.x-camera.x+player.dirX*28,player.y-camera.y+player.dirY*28);ctx.stroke();
+ // Particles
+ for(const p of particles){
+   ctx.globalAlpha=clamp(p.life,0,1);
+   drawCircle(p.x,p.y,p.r,p.color);
+ }
+ ctx.globalAlpha=1;
+}
+function drawCircle(x,y,r,color){
+ ctx.fillStyle=color;ctx.beginPath();ctx.arc(x-camera.x,y-camera.y,r,0,Math.PI*2);ctx.fill();
+}
+function drawMap(){
+ const mw=mapCanvas.width,mh=mapCanvas.height;
+ mctx.clearRect(0,0,mw,mh);mctx.fillStyle="#08131d";mctx.fillRect(0,0,mw,mh);
+ const tw=mw/W,th=mh/H;
+ for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+   if(!seen[y][x])continue;
+   const t=world[y][x];
+   mctx.fillStyle=t===WALL?"#77838c":t===ORE?"#d9a65c":t===CRYSTAL?"#66eaff":"#28414c";
+   mctx.fillRect(x*tw,y*th,Math.ceil(tw),Math.ceil(th));
+ }
+ for(const o of objects){
+   const t=tileAt(o.x,o.y);if(!seen[t.ty]?.[t.tx])continue;
+   mctx.fillStyle=o.type==="enemy"?"#ff515c":"#e5d39a";
+   mctx.fillRect(o.x/TILE*tw-1,o.y/TILE*th-1,3,3);
+ }
+ mctx.fillStyle="#e7faff";
+ mctx.fillRect(ship.x/TILE*tw-2,ship.y/TILE*th-2,5,5);
+ mctx.fillStyle="#5cffd5";
+ mctx.fillRect(lab.x/TILE*tw-2,lab.y/TILE*th-2,5,5);
+ mctx.fillStyle="#fff";
+ mctx.beginPath();mctx.arc(player.x/TILE*tw,player.y/TILE*th,3,0,Math.PI*2);mctx.fill();
+}
+function burst(x,y,color,count){
+ for(let i=0;i<count;i++){
+   let a=Math.random()*Math.PI*2,s=30+Math.random()*110;
+   particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.4+Math.random()*.6,r:2+Math.random()*3,color});
+ }
+}
+
+/* ---------- GAME LOOP ---------- */
+function update(dtNow){
+ dt= Math.min(dtNow,.04);
+ if(!paused&&!gameOver){
+   let dx=0,dy=0;
+   if(keys.up||keys.w)dy--;
+   if(keys.down||keys.s)dy++;
+   if(keys.left||keys.a)dx--;
+   if(keys.right||keys.d)dx++;
+   movePlayer(dx,dy);
+   if(!running&&Math.hypot(dx,dy)===0)player.stamina=Math.min(100,player.stamina+7*dt);
+   // Enemy AI: chase and attack.
+   for(const o of objects){
+     if(o.type!=="enemy")continue;
+     const d=dist(o,player);
+     if(d<270&&d>25){
+       const vx=(player.x-o.x)/d,vy=(player.y-o.y)/d;
+       const nx=o.x+vx*35*dt,ny=o.y+vy*35*dt;
+       if(!solidAt(nx,ny)){o.x=nx;o.y=ny}
+     }
+     if(d<35){
+       o.attack-=dt;
+       if(o.attack<=0){
+         player.hp-=5;o.attack=1.2;
+         burst(player.x,player.y,"#ff5b68",5);
+         if(player.hp<=0){player.hp=0;gameOver=true;showModal("<h2>Mission Failed</h2><p>Your explorer was overwhelmed.</p><button onclick='restartGame()'>Restart</button>")}
+       }
+     }
+   }
+   // Projectile collisions.
+   for(const b of bullets){
+     b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;
+     const t=tileAt(b.x,b.y);
+     if(!inside(t.tx,t.ty)||world[t.ty][t.tx]===WALL)b.life=0;
+     for(const o of objects){
+       if(o.type==="enemy"&&b.life>0&&dist(b,o)<o.r+4){
+         o.hp-=15;b.life=0;burst(o.x,o.y,"#ff6b75",5);
+         if(o.hp<=0)objects.splice(objects.indexOf(o),1);
+         break;
+       }
+     }
+   }
+   bullets=bullets.filter(b=>b.life>0);
+   for(const p of particles){
+     p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;
+     p.vx*=.96;p.vy*=.96;
+   }
+   particles=particles.filter(p=>p.life>0);
+   // Enemies occasionally threaten the ship.
+   for(const o of objects){
+     if(o.type==="enemy"&&dist(o,ship)<65){
+       o.shipAttack=(o.shipAttack||0)-dt;
+       if(o.shipAttack<=0){ship.hp=Math.max(0,ship.hp-2);o.shipAttack=1.5}
+     }
+   }
+   if(ship.hp<=0&&!gameOver){
+     gameOver=true;
+     showModal("<h2>🚀 Ship Destroyed</h2><p>Mission failed. Your ship's hull reached 0%.</p><button onclick='restartGame()'>Restart Mission</button>");
+   }
+   if(crafting&&performance.now()-crafting.start>=crafting.duration){
+     crafting=null;player.inv.medicine++;notify("Medicine crafted successfully!");
+     if(document.getElementById("modal").style.display==="flex")openLab();
+   }
+   if(player.stamina<25&&Math.random()<.008)notify("Low stamina! Rest or use medicine.");
+ }
+ updateHUD();
+ drawWorld();drawMap();
+ requestAnimationFrame(update);
+}
+function restartGame(){
+ player.x=4*TILE+20;player.y=4*TILE+20;player.stamina=100;player.hp=100;
+ player.inv={ore:0,crystal:0,medicine:0};
+ ship.hp=100;paused=false;gameOver=false;crafting=null;recipeUnlocked=false;
+ bullets=[];particles=[];generateWorld();closeModal();updateHUD();
+}
+function setAction(action){
+ selectedAction=action;
+ document.querySelectorAll("[data-action]").forEach(b=>b.classList.toggle("active",b.dataset.action===action));
+ document.getElementById("actionBtn").textContent=({move:"🚶 Move",dig:"⛏ Dig",fire:"🔫 Fire",interact:"✋ Interact"})[action];
+}
+document.querySelectorAll("[data-action]").forEach(b=>b.addEventListener("click",()=>setAction(b.dataset.action)));
+function performAction(){
+ if(paused||gameOver)return;
+ if(selectedAction==="dig")dig();
+ else if(selectedAction==="fire")fire();
+ else if(selectedAction==="interact")interact();
+ else notify("Move with the directional controls.");
+}
+document.getElementById("actionBtn").addEventListener("click",performAction);
+document.getElementById("useBtn").addEventListener("click",useMedicine);
+document.getElementById("runBtn").addEventListener("click",()=>{running=!running;document.getElementById("runBtn").classList.toggle("active",running)});
+document.getElementById("pauseBtn").addEventListener("click",()=>{
+ paused=!paused;document.getElementById("pauseBtn").textContent=paused?"▶ Resume":"Ⅱ Pause";
+ if(paused)notify("Game paused.");
+});
+document.getElementById("mapToggle").addEventListener("click",()=>{
+ expandedMap=!expandedMap;
+ document.getElementById("mapBox").style.width=expandedMap?"min(65vw,600px)":"135px";
+ document.getElementById("mapBox").style.height=expandedMap?"min(65vh,450px)":"105px";
+ document.getElementById("mapToggle").textContent=expandedMap?"🗺 Minimize Map":"🗺 Expand Map";
+ resize();
+});
+document.getElementById("game").addEventListener("pointerdown",e=>{
+ if(paused||gameOver)return;
+ const rect=canvas.getBoundingClientRect();
+ const wx=e.clientX-rect.left+camera.x,wy=e.clientY-rect.top+camera.y;
+ const dx=wx-player.x,dy=wy-player.y,d=Math.hypot(dx,dy);
+ if(d>2){player.dirX=dx/d;player.dirY=dy/d}
+ if(selectedAction!=="move")performAction();
+});
+function bindHold(id,key){
+ const el=document.getElementById(id);
+ const down=e=>{e.preventDefault();keys[key]=true};
+ const up=e=>{e.preventDefault();keys[key]=false};
+ el.addEventListener("pointerdown",down);
+ el.addEventListener("pointerup",up);
+ el.addEventListener("pointercancel",up);
+ el.addEventListener("pointerleave",up);
+}
+bindHold("up","up");bindHold("down","down");bindHold("left","left");bindHold("right","right");
+window.addEventListener("keydown",e=>{
+ const k=e.key.toLowerCase();
+ if(["arrowup","arrowdown","arrowleft","arrowright"," "].includes(k))e.preventDefault();
+ keys[({arrowup:"up",arrowdown:"down",arrowleft:"left",arrowright:"right"})[k]||k]=true;
+ if(k===" "){performAction()}
+ if(k==="e")interact();
+ if(k==="q")useMedicine();
+});
+window.addEventListener("keyup",e=>{
+ const k=e.key.toLowerCase();
+ keys[({arrowup:"up",arrowdown:"down",arrowleft:"left",arrowright:"right"})[k]||k]=false;
+});
+window.addEventListener("blur",()=>{for(const k in keys)keys[k]=false;running=false});
+resize();generateWorld();updateHUD();requestAnimationFrame(update);
+</script>
+</body>
+</html>
